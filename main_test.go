@@ -9,6 +9,10 @@ import (
 )
 
 func TestRun(t *testing.T) {
+	if err := os.Setenv("EDITOR", "vim"); err != nil {
+		t.Fatal(err)
+	}
+
 	file, err := ioutil.TempFile("", "testing.md")
 	if err != nil {
 		t.Fatal(err)
@@ -34,5 +38,22 @@ func TestRun(t *testing.T) {
 
 	if string(got) != want {
 		t.Fatalf("incorrect data from vim command. got=%q; want=%q", string(got), want)
+	}
+}
+
+func TestEditorNotSet(t *testing.T) {
+	if err := os.Setenv("EDITOR", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	err := run(
+		"test",
+		"-c", ":$put _",
+		"-c", "$ s/^/### testing/",
+		"-c", ":wq",
+	)
+
+	if err != editorNotSet {
+		t.Fatalf("excepted to fail when editor not set. got=%s", err.Error())
 	}
 }
