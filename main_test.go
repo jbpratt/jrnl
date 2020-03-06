@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestRun(t *testing.T) {
+func TestEditor(t *testing.T) {
 	if err := os.Setenv("EDITOR", "vim"); err != nil {
 		t.Fatal(err)
 	}
@@ -22,10 +22,9 @@ func TestRun(t *testing.T) {
 	now := time.Now().Format("15:04:05")
 	want := fmt.Sprintf("\n### %s\n", now)
 
-	if err := run(
+	if err := editor(
 		file.Name(),
-		"-c", ":$put _",
-		"-c", fmt.Sprintf("$ s/^/### %s/", now),
+		"-c", fmt.Sprintf(":call append(line('$'), '### %s')", time.Now().Format("15:04:05")),
 		"-c", ":wq",
 	); err != nil {
 		t.Fatal(err)
@@ -46,14 +45,12 @@ func TestEditorNotSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := run(
+	if err := editor(
 		"test",
 		"-c", ":$put _",
 		"-c", "$ s/^/### testing/",
 		"-c", ":wq",
-	)
-
-	if err != editorNotSet {
+	); err != editorNotSet {
 		t.Fatalf("excepted to fail when editor not set. got=%s", err.Error())
 	}
 }
