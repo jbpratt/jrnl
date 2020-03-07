@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -52,5 +54,53 @@ func TestEditorNotSet(t *testing.T) {
 		"-c", ":wq",
 	); err != editorNotSet {
 		t.Fatalf("excepted to fail when editor not set. got=%s", err.Error())
+	}
+}
+
+func TestLoadConfigNotExists(t *testing.T) {
+	dir, err := ioutil.TempDir("", ".config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	cfg, err := loadConfig(dir)
+	if err != nil {
+		t.Fatalf("loadConfig(%q) failed with %s", dir, err.Error())
+	}
+
+	if cfg.EncryptionMethod != "" || cfg.Path != "" {
+		t.Fatalf("excepted new, empty configuration. got=%v", cfg)
+	}
+}
+
+func TestLoadConfigExists(t *testing.T) {
+	dir, err := ioutil.TempDir("", ".config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	// make config and save it, then load it
+	want := &config{Path: "testing", EncryptionMethod: "PASSPHRASE"}
+	if err = os.Mkdir(dir+configDir, os.ModePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = ioutil.WriteFile(dir+"/jrnl/config.json", data, os.ModePerm); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := loadConfig(dir)
+	if err != nil {
+		t.Fatalf("loadConfig(%q) failed with %s", dir, err.Error())
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("loadConfig failed. got=%v; want=%v", got, want)
 	}
 }
