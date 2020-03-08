@@ -69,7 +69,7 @@ func TestLoadConfigNotExists(t *testing.T) {
 		t.Fatalf("loadConfig(%q) failed with %s", dir, err.Error())
 	}
 
-	if cfg.EncryptionMethod != "" || cfg.Path != "" {
+	if cfg.Path != "" {
 		t.Fatalf("excepted new, empty configuration. got=%v", cfg)
 	}
 }
@@ -81,7 +81,7 @@ func TestLoadConfigExists(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 	// make config and save it, then load it
-	want := &config{Path: "testing", EncryptionMethod: "PASSPHRASE"}
+	want := &config{Path: "testing"}
 	if err = os.Mkdir(dir+configDir, os.ModePerm); err != nil {
 		t.Fatal(err)
 	}
