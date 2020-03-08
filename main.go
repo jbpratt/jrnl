@@ -9,8 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"time"
-
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 // TODO:
