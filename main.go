@@ -18,8 +18,6 @@ var editorNotSet = errors.New("EDITOR env variable not set")
 type config struct {
 	// Path to store journal entries
 	Path string `json:"path"`
-	// age encryption method
-	EncryptionMethod string `json:"encryption_method"`
 }
 
 func main() {
@@ -34,34 +32,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if cfg.EncryptionMethod == "" && cfg.Path == "" {
-		fmt.Println(`
-Which age encryption method would you like to go with?
-1.) Encrypt to a PEM encoded format.
-2.) Encrypt with a passphrase.
-3.) Encrypt to the specified RECIPIENT. Can be repeated.`)
+	if cfg.Path == "" {
 		// setup encryption recipient
 		var response string
-		_, err := fmt.Scanln(&response)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		switch response {
-		case "1":
-			cfg.EncryptionMethod = "PEM"
-			fmt.Println("Setting up your journal with a PEM encoded format")
-		case "2":
-			cfg.EncryptionMethod = "PASSPHRASE"
-			fmt.Println("Encrypting with a passpharse")
-		case "3":
-			cfg.EncryptionMethod = "RECIPIENT"
-			fmt.Println("Using a recipient")
-		default:
-			fmt.Println("Error: invalid input")
-			os.Exit(1)
-		}
-
 		fmt.Println("Where do you want to store your entries? (default ~/.config/jrnl/)")
 		response = ""
 		_, err = fmt.Scanln(&response)
@@ -91,17 +64,38 @@ Which age encryption method would you like to go with?
 	}
 
 	encoded := true
-	filename := fmt.Sprintf("%s.md", time.Now().Format("2006-01-02"))
+	filename := fmt.Sprintf("%s/%s.md", cfg.Path, time.Now().Format("2006-01-02"))
 	if _, err := os.Stat(filename + ".age"); err != nil {
 		if os.IsNotExist(err) {
 			encoded = false
-			// create the markdown file but don't encode?
 		}
 	}
+
+	// create the markdown file but don't encode
+	/*
+		file, err := ioutil.TempFile(os.TempDir(), "jrnl-")
+		if err != nil {
+			log.Fatal(err)
+		}
+		// remove decoded file
+		defer os.Remove(file.Name())
+	*/
+
 	if encoded {
 		// decode file if encoded
+		/*
+			decode, err := exec.Command("age", "-d", filename+".age").Output()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			if _, err := file.Write(decode); err != nil {
+				log.Fatal("Failed to write decoded temporary file", err)
+			}
+		*/
 	}
 
+	// file.Close()
 	// Open a file named the current date. Insert the current time at the last line
 	// handle inputting the time with other editors.
 	if err := editor(
@@ -113,7 +107,6 @@ Which age encryption method would you like to go with?
 	}
 
 	// reencode the file
-	// remove decoded file
 }
 
 func editor(cmds ...string) error {
