@@ -9,7 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"golang.org/x/crypto/ssh/terminal"
 )
+
+// TODO:
+// - syncing
+// - editing old entries
 
 const configDir = "/jrnl/"
 
@@ -36,7 +42,6 @@ func main() {
 		// setup encryption recipient
 		var response string
 		fmt.Println("Where do you want to store your entries? (default ~/.config/jrnl/)")
-		response = ""
 		_, err = fmt.Scanln(&response)
 		if err != nil {
 			if err.Error() == "unexpected newline" {
@@ -47,18 +52,12 @@ func main() {
 		}
 
 		if response == "" {
-			cfg.Path = dir + configDir + "config.json"
+			cfg.Path = dir + configDir
 		} else {
 			cfg.Path = response
 		}
 
-		// save config
-		data, err := json.Marshal(cfg)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if err = ioutil.WriteFile(dir+"/jrnl/config.json", data, os.ModePerm); err != nil {
+		if err := writeConfig(cfg, dir+"/jrnl/config.json"); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -107,6 +106,7 @@ func main() {
 	}
 
 	// reencode the file
+	// remove decoded file
 }
 
 func editor(cmds ...string) error {
@@ -122,30 +122,24 @@ func editor(cmds ...string) error {
 }
 
 func loadConfig(dir string) (*config, error) {
+	path := dir + "/jrnl/config.json"
 	// first time, make dir and config file
 	if _, err := os.Stat(dir + configDir); os.IsNotExist(err) {
 		if err = os.Mkdir(dir+configDir, os.ModePerm); err != nil {
 			return nil, err
 		}
 
-		file, err := os.Create(dir + "/jrnl/config.json")
+		file, err := os.Create(path)
 		if err != nil {
 			return nil, err
 		}
 		defer file.Close()
-
-		cfg := &config{}
-		data, err := json.Marshal(cfg)
-		if err != nil {
-			return nil, err
-		}
-
-		if err = ioutil.WriteFile(dir+"/jrnl/config.json", data, os.ModePerm); err != nil {
+		if err := writeConfig(&config{}, path); err != nil {
 			return nil, err
 		}
 	}
 
-	data, err := ioutil.ReadFile(dir + "/jrnl/config.json")
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +151,13 @@ func loadConfig(dir string) (*config, error) {
 	return &cfg, nil
 }
 
-// TODO:
-// - syncing
-// - editing old entries
+func writeConfig(cfg *config, path string) error {
+	data, err := json.Marshal(&config{})
+	if err != nil {
+		return err
+	}
+	if err = ioutil.WriteFile(path, data, os.ModePerm); err != nil {
+		return err
+	}
+	return nil
+}
