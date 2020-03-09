@@ -12,6 +12,7 @@ import (
 )
 
 // TODO:
+// - encryption
 // - syncing
 // - editing old entries
 
@@ -25,7 +26,6 @@ type config struct {
 }
 
 func main() {
-	// check for userconfigdir for jrnl
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		log.Fatal(err)
@@ -37,7 +37,6 @@ func main() {
 	}
 
 	if cfg.Path == "" {
-		// setup encryption recipient
 		var response string
 		fmt.Println("Where do you want to store your entries? (default ~/.config/jrnl/)")
 		_, err = fmt.Scanln(&response)
@@ -65,6 +64,8 @@ func main() {
 	if _, err := os.Stat(filename + ".age"); err != nil {
 		if os.IsNotExist(err) {
 			encoded = false
+		} else {
+			log.Fatal(err)
 		}
 	}
 
@@ -80,22 +81,15 @@ func main() {
 
 	if encoded {
 		// decode file if encoded
-		/*
-			decode, err := exec.Command("age", "-d", filename+".age").Output()
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			if _, err := file.Write(decode); err != nil {
-				log.Fatal("Failed to write decoded temporary file", err)
-			}
-		*/
+		log.Fatal(errors.New("decoding not implemented"))
 	}
 
 	// file.Close()
 	// Open a file named the current date. Insert the current time at the last line
 	// handle inputting the time with other editors.
-	if err := editor(
+	// Eventually this should open a file in /tmp/ and handle things there
+	// TODO: handle additional editors?
+	if err := edit(
 		filename,
 		"-c", fmt.Sprintf(":call append(line('$'), '### %s')", time.Now().Format("15:04:05")),
 		"+$",
@@ -104,10 +98,9 @@ func main() {
 	}
 
 	// reencode the file
-	// remove decoded file
 }
 
-func editor(cmds ...string) error {
+func edit(cmds ...string) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		return editorNotSet
@@ -116,7 +109,10 @@ func editor(cmds ...string) error {
 	cmd := exec.Command(editor, cmds...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to run editor: %v with %v", err, cmds)
+	}
+	return nil
 }
 
 func loadConfig(dir string) (*config, error) {
@@ -129,22 +125,24 @@ func loadConfig(dir string) (*config, error) {
 
 		file, err := os.Create(path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create config directory: %v", err)
 		}
-		defer file.Close()
-		if err := writeConfig(&config{}, path); err != nil {
-			return nil, err
+		if err = writeConfig(&config{}, path); err != nil {
+			return nil, fmt.Errorf("failed to write the new config: %v", err)
+		}
+		if err = file.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close the new config file: %v", err)
 		}
 	}
 
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read config file: %v", err)
 	}
 
 	var cfg config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+	if err = json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %v", err)
 	}
 	return &cfg, nil
 }
@@ -152,10 +150,10 @@ func loadConfig(dir string) (*config, error) {
 func writeConfig(cfg *config, path string) error {
 	data, err := json.Marshal(&config{})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal config: %v", err)
 	}
 	if err = ioutil.WriteFile(path, data, os.ModePerm); err != nil {
-		return err
+		return fmt.Errorf("failed to write config file: %v", err)
 	}
 	return nil
 }

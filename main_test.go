@@ -24,7 +24,7 @@ func TestEditor(t *testing.T) {
 	now := time.Now().Format("15:04:05")
 	want := fmt.Sprintf("\n### %s\n", now)
 
-	if err := editor(
+	if err := edit(
 		file.Name(),
 		"-c", fmt.Sprintf(":call append(line('$'), '### %s')", time.Now().Format("15:04:05")),
 		"-c", ":wq",
@@ -47,8 +47,14 @@ func TestEditorNotSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := editor(
-		"test",
+	file, err := ioutil.TempFile("", "testing.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(file.Name())
+
+	if err := edit(
+		file.Name(),
 		"-c", ":$put _",
 		"-c", "$ s/^/### testing/",
 		"-c", ":wq",
