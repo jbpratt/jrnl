@@ -1,18 +1,24 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // TODO:
-// - encryption
 // - syncing
 // - editing old entries
 
@@ -60,8 +66,8 @@ func main() {
 	}
 
 	encoded := true
-	filename := fmt.Sprintf("%s/%s.md", cfg.Path, time.Now().Format("2006-01-02"))
-	if _, err := os.Stat(filename + ".age"); err != nil {
+	filename := fmt.Sprintf("%s/%s", cfg.Path, time.Now().Format("2006-01-02"))
+	if _, err := os.Stat(filename); err != nil {
 		if os.IsNotExist(err) {
 			encoded = false
 		} else {
@@ -69,35 +75,109 @@ func main() {
 		}
 	}
 
-	// create the markdown file but don't encode
-	/*
-		file, err := ioutil.TempFile(os.TempDir(), "jrnl-")
+	file, err := ioutil.TempFile(os.TempDir(), "jrnl-")
+	if err != nil {
+		log.Fatal(err)
+	}
+	// remove decoded file
+	defer os.Remove(file.Name())
+
+	var passphrase string
+	if encoded {
+		fmt.Println("Decrypting today's entry...")
+
+		// decode file if encoded and write to tmpfile
+		fmt.Println("Passpharse (32 bytes): ")
+		bytePass, err := terminal.ReadPassword(0)
 		if err != nil {
 			log.Fatal(err)
 		}
-		// remove decoded file
-		defer os.Remove(file.Name())
-	*/
+		passphrase = strings.TrimSpace(string(bytePass))
 
-	if encoded {
-		// decode file if encoded
-		log.Fatal(errors.New("decoding not implemented"))
+		// check if file encoded?
+		encrypted, err := ioutil.ReadFile(filename)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// reencode the file
+		c, err := aes.NewCipher([]byte(passphrase))
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		gcm, err := cipher.NewGCM(c)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		ns := gcm.NonceSize()
+		if len(encrypted) < ns {
+			log.Fatal(err)
+		}
+		nonce, ciphertext := encrypted[:ns], encrypted[ns:]
+		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err = ioutil.WriteFile(file.Name(), plaintext, os.ModePerm); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	// file.Close()
+	file.Close()
 	// Open a file named the current date. Insert the current time at the last line
 	// handle inputting the time with other editors.
 	// Eventually this should open a file in /tmp/ and handle things there
 	// TODO: handle additional editors?
 	if err := edit(
-		filename,
-		"-c", fmt.Sprintf(":call append(line('$'), '### %s')", time.Now().Format("15:04:05")),
+		file.Name(),
+		"-c", "set syntax=markdown",
+		"-c", fmt.Sprintf(":call append(line('$'), '### %s')",
+			time.Now().Format("15:04:05")),
 		"+$",
 	); err != nil {
 		log.Fatal(err)
 	}
 
+	// load file
+	unencrypted, err := ioutil.ReadFile(file.Name())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Encrypting today's entry...")
+	if passphrase == "" {
+		fmt.Println("Passpharse (32 bytes): ")
+		bytePass, err := terminal.ReadPassword(0)
+		if err != nil {
+			log.Fatal(err)
+		}
+		passphrase = strings.TrimSpace(string(bytePass))
+	}
+
 	// reencode the file
+	c, err := aes.NewCipher([]byte(passphrase))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gcm, err := cipher.NewGCM(c)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		log.Fatal(err)
+	}
+
+	if err = ioutil.WriteFile(
+		filename,
+		gcm.Seal(nonce, nonce, unencrypted, nil),
+		os.ModePerm,
+	); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func edit(cmds ...string) error {
