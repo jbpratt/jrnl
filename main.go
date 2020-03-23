@@ -42,6 +42,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// if path not set, run through setup
 	if cfg.Path == "" {
 		var response string
 		fmt.Println("Where do you want to store your entries? (default ~/.config/jrnl/)")
@@ -85,41 +86,14 @@ func main() {
 	var passphrase string
 	if encoded {
 		fmt.Println("Decrypting today's entry...")
-
-		// decode file if encoded and write to tmpfile
 		fmt.Println("Passpharse (32 bytes): ")
 		bytePass, err := terminal.ReadPassword(0)
 		if err != nil {
 			log.Fatal(err)
 		}
 		passphrase = strings.TrimSpace(string(bytePass))
-
-		// check if file encoded?
-		encrypted, err := ioutil.ReadFile(filename)
-		if err != nil {
-			log.Fatal(err)
-		}
-		// reencode the file
-		c, err := aes.NewCipher([]byte(passphrase))
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		gcm, err := cipher.NewGCM(c)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		ns := gcm.NonceSize()
-		if len(encrypted) < ns {
-			log.Fatal(err)
-		}
-		nonce, ciphertext := encrypted[:ns], encrypted[ns:]
-		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if err = ioutil.WriteFile(file.Name(), plaintext, os.ModePerm); err != nil {
+		// decode file if encoded and write to tmpfile
+		if err := decodeFile(filename, file.Name(), passphrase); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -139,12 +113,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// load file
-	unencrypted, err := ioutil.ReadFile(file.Name())
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	fmt.Println("Encrypting today's entry...")
 	if passphrase == "" {
 		fmt.Println("Passpharse (32 bytes): ")
@@ -155,27 +123,7 @@ func main() {
 		passphrase = strings.TrimSpace(string(bytePass))
 	}
 
-	// reencode the file
-	c, err := aes.NewCipher([]byte(passphrase))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	gcm, err := cipher.NewGCM(c)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		log.Fatal(err)
-	}
-
-	if err = ioutil.WriteFile(
-		filename,
-		gcm.Seal(nonce, nonce, unencrypted, nil),
-		os.ModePerm,
-	); err != nil {
+	if err = encodeFile(file.Name(), filename, passphrase); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -234,6 +182,68 @@ func writeConfig(cfg *config, path string) error {
 	}
 	if err = ioutil.WriteFile(path, data, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to write config file: %v", err)
+	}
+	return nil
+}
+
+func decodeFile(encryptedFile, outputFilename, passphrase string) error {
+	encrypted, err := ioutil.ReadFile(encryptedFile)
+	if err != nil {
+		return fmt.Errorf("failed to read in encoded file: %v", err)
+	}
+
+	c, err := aes.NewCipher([]byte(passphrase))
+	if err != nil {
+		return fmt.Errorf("failed to create cipher: %v", err)
+	}
+
+	gcm, err := cipher.NewGCM(c)
+	if err != nil {
+		return fmt.Errorf("failed to create gcm: %v", err)
+	}
+
+	ns := gcm.NonceSize()
+	if len(encrypted) < ns {
+		return fmt.Errorf("data not encrypted: %v", err)
+	}
+	nonce, ciphertext := encrypted[:ns], encrypted[ns:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return fmt.Errorf("failed to decode ciphertext: %v", err)
+	}
+	if err = ioutil.WriteFile(outputFilename, plaintext, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to write decrypted file: %v", err)
+	}
+	return nil
+}
+
+func encodeFile(unencryptedFile, outputFilename, passphrase string) error {
+	unencrypted, err := ioutil.ReadFile(unencryptedFile)
+	if err != nil {
+		return fmt.Errorf("failed to load unencrypted file: %v", err)
+	}
+
+	c, err := aes.NewCipher([]byte(passphrase))
+	if err != nil {
+		return fmt.Errorf("failed to create cipher: %v", err)
+	}
+
+	gcm, err := cipher.NewGCM(c)
+	if err != nil {
+		return fmt.Errorf("failed to generating gcm: %v", err)
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return fmt.Errorf("failed to populate nonce with random sequence: %v", err)
+	}
+
+	if err = ioutil.WriteFile(
+		outputFilename,
+		gcm.Seal(nonce, nonce, unencrypted, nil),
+		os.ModePerm,
+	); err != nil {
+		return fmt.Errorf("failed to write encrypted file (%q): %v", outputFilename, err)
 	}
 	return nil
 }
