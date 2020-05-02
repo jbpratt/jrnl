@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -75,20 +76,19 @@ func main() {
 		}
 	}
 
-	file.Close()
+	if _, err := file.WriteString(
+		fmt.Sprintf("\n### %s\n", time.Now().Format("01-02-2006 15:04:05 Mon")),
+	); err != nil {
+		log.Fatal(err)
+	}
 
-	timecmd := fmt.Sprintf(":call append(line('$'), '### %s')", time.Now().Format("01-02-2006 15:04:05 Mon"))
+	file.Close()
 
 	// Open a file named the current date. Insert the current time at the last line
 	// handle inputting the time with other editors.
 	// Eventually this should open a file in /tmp/ and handle things there
 	// TODO: handle additional editors?
-	if err := edit(
-		file.Name(),
-		"-c", timecmd,
-		"-c", "set syntax=markdown",
-		"+$",
-	); err != nil {
+	if err := edit(file.Name()); err != nil {
 		log.Fatal(err)
 	}
 
@@ -129,6 +129,16 @@ func edit(cmds ...string) error {
 		return editorNotSet
 	}
 
+	if editor == "vim" {
+		cmds = append(cmds, "-c set syntax=markdown", "+$")
+	} else if editor == "nano" {
+		lc := countLines(cmds[0])
+		if err := setupNanoSyntaxHighlighting(); err != nil {
+			return err
+		}
+		cmds = append(cmds, "-Y markdown", fmt.Sprintf("+%d", lc))
+	}
+
 	cmd := exec.Command(editor, cmds...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -136,6 +146,66 @@ func edit(cmds ...string) error {
 		return fmt.Errorf("failed to run editor: %w with %v", err, cmds)
 	}
 	return nil
+}
+
+func setupNanoSyntaxHighlighting() error {
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	syntaxPath := path.Join(dir, ".nano", "syntax")
+	if !doesExist(path.Join(syntaxPath, "markdown.nanorc")) {
+		if err = os.MkdirAll(syntaxPath, os.ModePerm); err != nil {
+			return err
+		}
+		source, err := os.Open(path.Join("config", "markdown.nanorc"))
+		if err != nil {
+			return err
+		}
+
+		mdpath := path.Join(syntaxPath, "markdown.nanorc")
+
+		dest, err := os.OpenFile(mdpath, os.O_CREATE|os.O_RDWR, os.ModeAppend)
+		if err != nil {
+			return err
+		}
+
+		_, err = io.Copy(dest, source)
+		if err != nil {
+			return err
+		}
+
+		source.Close()
+		dest.Close()
+		fmt.Println(dir)
+
+		nanorc, err := os.OpenFile(path.Join(dir, ".nanorc"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
+		if err != nil {
+			return err
+		}
+
+		if _, err = nanorc.WriteString(fmt.Sprintf("include %s\n", mdpath)); err != nil {
+			return err
+		}
+
+		if err := nanorc.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// this probably isn't the fastest way to count lines but it works
+func countLines(path string) int {
+	file, _ := os.Open(path)
+	fileScanner := bufio.NewScanner(file)
+	lineCount := 0
+	for fileScanner.Scan() {
+		lineCount++
+	}
+	return lineCount
 }
 
 func getConfigPath(dir string) string {
