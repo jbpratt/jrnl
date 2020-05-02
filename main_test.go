@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
 	"reflect"
 	"testing"
 	"time"
@@ -97,7 +98,7 @@ func TestLoadConfigExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err = ioutil.WriteFile(dir+"/jrnl/config.json", data, os.ModePerm); err != nil {
+	if err = ioutil.WriteFile(path.Join(dir, "jrnl", "config.json"), data, os.ModePerm); err != nil {
 		t.Fatal(err)
 	}
 

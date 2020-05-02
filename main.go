@@ -12,9 +12,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strings"
+	"path"
 	"time"
 
+	keyring "github.com/99designs/keyring"
+	"github.com/shurcooL/markdownfmt/markdown"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
@@ -22,7 +24,7 @@ import (
 // - syncing
 // - editing old entries
 
-const configDir = "/jrnl/"
+const configDir = "jrnl"
 
 var editorNotSet = errors.New("EDITOR env variable not set")
 
@@ -32,49 +34,13 @@ type config struct {
 }
 
 func main() {
-	dir, err := os.UserConfigDir()
+	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	cfg, err := loadConfig(dir)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// if path not set, run through setup
-	if cfg.Path == "" {
-		var response string
-		fmt.Println("Where do you want to store your entries? (default ~/.config/jrnl/)")
-		_, err = fmt.Scanln(&response)
-		if err != nil {
-			if err.Error() == "unexpected newline" {
-				fmt.Println("Using default directory")
-			} else {
-				log.Fatal(err)
-			}
-		}
-
-		if response == "" {
-			cfg.Path = dir + configDir
-		} else {
-			cfg.Path = response
-		}
-
-		if err := writeConfig(cfg, dir+"/jrnl/config.json"); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	encoded := true
-	filename := fmt.Sprintf("%s/%s", cfg.Path, time.Now().Format("2006-01-02"))
-	if _, err := os.Stat(filename); err != nil {
-		if os.IsNotExist(err) {
-			encoded = false
-		} else {
-			log.Fatal(err)
-		}
-	}
+	filename := path.Join(cfg.Path, "jrnl")
+	encoded := doesExist(filename)
 
 	file, err := ioutil.TempFile(os.TempDir(), "jrnl-")
 	if err != nil {
@@ -83,49 +49,78 @@ func main() {
 	// remove decoded file
 	defer os.Remove(file.Name())
 
-	var passphrase string
+	kr, err := keyring.Open(keyring.Config{
+		ServiceName: "jrnl",
+		AllowedBackends: []keyring.BackendType{
+			keyring.KWalletBackend,
+			keyring.PassBackend,
+			keyring.SecretServiceBackend,
+			keyring.KeychainBackend,
+			keyring.WinCredBackend,
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var passphrase []byte
 	if encoded {
-		fmt.Println("Decrypting today's entry...")
-		fmt.Println("Passpharse (32 bytes): ")
-		bytePass, err := terminal.ReadPassword(0)
+		pswd, err := kr.Get("passphrase")
 		if err != nil {
 			log.Fatal(err)
 		}
-		passphrase = strings.TrimSpace(string(bytePass))
-		// decode file if encoded and write to tmpfile
+		passphrase = pswd.Data
 		if err := decodeFile(filename, file.Name(), passphrase); err != nil {
 			log.Fatal(err)
 		}
 	}
 
 	file.Close()
+
+	timecmd := fmt.Sprintf(":call append(line('$'), '### %s')", time.Now().Format("01-02-2006 15:04:05 Mon"))
+
 	// Open a file named the current date. Insert the current time at the last line
 	// handle inputting the time with other editors.
 	// Eventually this should open a file in /tmp/ and handle things there
 	// TODO: handle additional editors?
 	if err := edit(
 		file.Name(),
+		"-c", timecmd,
 		"-c", "set syntax=markdown",
-		"-c", fmt.Sprintf(":call append(line('$'), '### %s')",
-			time.Now().Format("15:04:05")),
 		"+$",
 	); err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Encrypting today's entry...")
-	if passphrase == "" {
+	if len(passphrase) == 0 {
 		fmt.Println("Passpharse (32 bytes): ")
-		bytePass, err := terminal.ReadPassword(0)
+		passphrase, err = terminal.ReadPassword(0)
 		if err != nil {
 			log.Fatal(err)
 		}
-		passphrase = strings.TrimSpace(string(bytePass))
+		if err = kr.Set(keyring.Item{
+			Description: "jrnl",
+			Key:         "passphrase",
+			Data:        passphrase,
+		}); err != nil {
+			log.Fatal(err)
+		}
 	}
 
-	if err = encodeFile(file.Name(), filename, passphrase); err != nil {
+	if err = fmtAndEncodeFile(file.Name(), filename, passphrase); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func doesExist(filename string) bool {
+	if _, err := os.Stat(filename); err != nil {
+		if os.IsNotExist(err) {
+			return false
+		} else {
+			log.Fatal(err)
+		}
+	}
+	return true
 }
 
 func edit(cmds ...string) error {
@@ -138,39 +133,70 @@ func edit(cmds ...string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to run editor: %v with %v", err, cmds)
+		return fmt.Errorf("failed to run editor: %w with %v", err, cmds)
 	}
 	return nil
 }
 
-func loadConfig(dir string) (*config, error) {
-	path := dir + "/jrnl/config.json"
-	// first time, make dir and config file
-	if _, err := os.Stat(dir + configDir); os.IsNotExist(err) {
-		if err = os.Mkdir(dir+configDir, os.ModePerm); err != nil {
-			return nil, err
-		}
-
-		file, err := os.Create(path)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create config directory: %v", err)
-		}
-		if err = writeConfig(&config{}, path); err != nil {
-			return nil, fmt.Errorf("failed to write the new config: %v", err)
-		}
-		if err = file.Close(); err != nil {
-			return nil, fmt.Errorf("failed to close the new config file: %v", err)
+func getConfigPath(dir string) string {
+	var response string
+	fmt.Println("Where do you want to store your entries? (default $HOME/.config/jrnl/)")
+	_, err := fmt.Scanln(&response)
+	if err != nil {
+		if err.Error() == "unexpected newline" {
+			fmt.Println("Using default directory")
+		} else {
+			log.Fatal(err)
 		}
 	}
 
-	data, err := ioutil.ReadFile(path)
+	var outpath string
+	if response == "" {
+		outpath = path.Join(dir, configDir)
+	} else {
+		outpath = response
+	}
+
+	return outpath
+}
+
+func loadConfig() (*config, error) {
+	dir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %v", err)
+		return nil, err
+	}
+
+	cfgpath := path.Join(dir, "jrnl", "config.json")
+	cfgdir := path.Join(dir, configDir)
+	// first time, make dir and config file
+	if _, err := os.Stat(cfgdir); os.IsNotExist(err) {
+		if err = os.Mkdir(cfgdir, os.ModePerm); err != nil {
+			return nil, err
+		}
+
+		file, err := os.Create(cfgpath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create config directory: %w", err)
+		}
+
+		pth := getConfigPath(dir)
+
+		if err = writeConfig(&config{pth}, cfgpath); err != nil {
+			return nil, fmt.Errorf("failed to write the new config: %w", err)
+		}
+		if err = file.Close(); err != nil {
+			return nil, fmt.Errorf("failed to close the new config file: %w", err)
+		}
+	}
+
+	data, err := ioutil.ReadFile(cfgpath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	var cfg config
 	if err = json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 	return &cfg, nil
 }
@@ -178,72 +204,77 @@ func loadConfig(dir string) (*config, error) {
 func writeConfig(cfg *config, path string) error {
 	data, err := json.Marshal(&config{})
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %v", err)
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 	if err = ioutil.WriteFile(path, data, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to write config file: %v", err)
+		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	return nil
 }
 
-func decodeFile(encryptedFile, outputFilename, passphrase string) error {
+func decodeFile(encryptedFile, outputFilename string, passphrase []byte) error {
 	encrypted, err := ioutil.ReadFile(encryptedFile)
 	if err != nil {
-		return fmt.Errorf("failed to read in encoded file: %v", err)
+		return fmt.Errorf("failed to read in encoded file: %w", err)
 	}
 
-	c, err := aes.NewCipher([]byte(passphrase))
+	c, err := aes.NewCipher(passphrase)
 	if err != nil {
-		return fmt.Errorf("failed to create cipher: %v", err)
+		return fmt.Errorf("failed to create cipher: %w", err)
 	}
 
 	gcm, err := cipher.NewGCM(c)
 	if err != nil {
-		return fmt.Errorf("failed to create gcm: %v", err)
+		return fmt.Errorf("failed to create gcm: %w", err)
 	}
 
 	ns := gcm.NonceSize()
 	if len(encrypted) < ns {
-		return fmt.Errorf("data not encrypted: %v", err)
+		return fmt.Errorf("data not encrypted: %w", err)
 	}
 	nonce, ciphertext := encrypted[:ns], encrypted[ns:]
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return fmt.Errorf("failed to decode ciphertext: %v", err)
+		return fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
 	if err = ioutil.WriteFile(outputFilename, plaintext, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to write decrypted file: %v", err)
+		return fmt.Errorf("failed to write decrypted file: %w", err)
 	}
 	return nil
 }
 
-func encodeFile(unencryptedFile, outputFilename, passphrase string) error {
+func fmtAndEncodeFile(unencryptedFile, outputFilename string, passphrase []byte) error {
 	unencrypted, err := ioutil.ReadFile(unencryptedFile)
 	if err != nil {
-		return fmt.Errorf("failed to load unencrypted file: %v", err)
+		return fmt.Errorf("failed to load unencrypted file: %w", err)
 	}
 
-	c, err := aes.NewCipher([]byte(passphrase))
+	fmtd, err := markdown.Process("", unencrypted, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create cipher: %v", err)
+		return fmt.Errorf("failed to format jrnl entry: %w", err)
+	}
+
+	c, err := aes.NewCipher(passphrase)
+	if err != nil {
+		return fmt.Errorf("failed to create cipher: %w", err)
 	}
 
 	gcm, err := cipher.NewGCM(c)
 	if err != nil {
-		return fmt.Errorf("failed to generating gcm: %v", err)
+		return fmt.Errorf("failed to generating gcm: %w", err)
 	}
 
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		return fmt.Errorf("failed to populate nonce with random sequence: %v", err)
+		return fmt.Errorf("failed to populate nonce with random sequence: %w", err)
 	}
 
 	if err = ioutil.WriteFile(
 		outputFilename,
-		gcm.Seal(nonce, nonce, unencrypted, nil),
+		gcm.Seal(nonce, nonce, fmtd, nil),
 		os.ModePerm,
 	); err != nil {
-		return fmt.Errorf("failed to write encrypted file (%q): %v", outputFilename, err)
+		return fmt.Errorf("failed to write encrypted file (%q): %w", outputFilename, err)
 	}
 	return nil
 }
