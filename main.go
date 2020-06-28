@@ -149,23 +149,24 @@ func edit(cmds ...string) error {
 }
 
 func setupNanoSyntaxHighlighting() error {
-	dir, err := os.UserHomeDir()
+	confdir, err := os.UserConfigDir()
 	if err != nil {
 		return err
 	}
 
-	syntaxPath := path.Join(dir, ".nano", "syntax")
+	syntaxPath := path.Join(confdir, "nano", "syntax")
 	if !doesExist(path.Join(syntaxPath, "markdown.nanorc")) {
 		if err = os.MkdirAll(syntaxPath, os.ModePerm); err != nil {
 			return err
 		}
+
+		// copy markdown syntax to user config
 		source, err := os.Open(path.Join("config", "markdown.nanorc"))
 		if err != nil {
 			return err
 		}
 
 		mdpath := path.Join(syntaxPath, "markdown.nanorc")
-
 		dest, err := os.OpenFile(mdpath, os.O_CREATE|os.O_RDWR, os.ModeAppend)
 		if err != nil {
 			return err
@@ -178,9 +179,20 @@ func setupNanoSyntaxHighlighting() error {
 
 		source.Close()
 		dest.Close()
-		fmt.Println(dir)
+		fmt.Println(confdir)
 
-		nanorc, err := os.OpenFile(path.Join(dir, ".nanorc"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
+		dir, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+
+		nanorcPath := path.Join(dir, ".nanorc")
+
+		if !doesExist(nanorcPath) {
+			nanorcPath = path.Join(confdir, "nano", "nanorc")
+		}
+
+		nanorc, err := os.OpenFile(nanorcPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, os.ModePerm)
 		if err != nil {
 			return err
 		}
